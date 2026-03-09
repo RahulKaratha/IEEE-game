@@ -1,0 +1,31 @@
+<svg width="420" height="220" viewBox="0 0 420 220" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bikeBody" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#ef4444"/>
+      <stop offset="100%" stop-color="#991b1b"/>
+    </linearGradient>
+    <linearGradient id="bikeSeat" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#1f2937"/>
+      <stop offset="100%" stop-color="#000000"/>
+    </linearGradient>
+  </defs>
+
+  <ellipse cx="96" cy="178" rx="50" ry="12" fill="#0f172a" opacity="0.18"/>
+  <ellipse cx="304" cy="178" rx="50" ry="12" fill="#0f172a" opacity="0.18"/>
+
+  <circle cx="96" cy="156" r="42" fill="#111827"/>
+  <circle cx="96" cy="156" r="24" fill="#6b7280"/>
+  <circle cx="304" cy="156" r="42" fill="#111827"/>
+  <circle cx="304" cy="156" r="24" fill="#6b7280"/>
+
+  <path d="M110 120H190L226 96H286L304 128" stroke="#1f2937" stroke-width="12" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+  <path d="M190 120L212 140H270" stroke="#1f2937" stroke-width="10" stroke-linecap="round" fill="none"/>
+
+  <path d="M170 102H244C257 102 268 113 268 126V132H162V110C162 106 165 102 170 102Z" fill="url(#bikeBody)"/>
+  <rect x="206" y="84" width="62" height="18" rx="9" fill="url(#bikeSeat)"/>
+  <rect x="260" y="74" width="8" height="18" rx="4" fill="#374151"/>
+  <rect x="154" y="96" width="10" height="22" rx="4" fill="#374151"/>
+
+  <circle cx="278" cy="132" r="8" fill="#fef08a"/>
+  <rect x="154" y="126" width="12" height="6" rx="3" fill="#fecaca"/>
+</svg>
