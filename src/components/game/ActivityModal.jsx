@@ -413,6 +413,37 @@ function IndustryVisitActivity({ onComplete, done }) {
     );
 }
 
+// ── Left Bus – Future Map (Coming Soon) ─────────────────────────────────────────
+function BusLeftActivity({ onClose }) {
+    return (
+        <div className="activity-content" style={{ textAlign: 'center' }}>
+            <div className="activity-icon" style={{ fontSize: 56, marginBottom: 10 }}>🚌</div>
+            <h3 style={{ color: '#fbbf24', fontSize: 22, marginBottom: 8 }}>Next Stop: Mystery Map</h3>
+            <p className="activity-desc" style={{ marginBottom: 18 }}>
+                This bus is heading somewhere <strong style={{ color: '#60a5fa' }}>brand new</strong>.
+                <br />The destination is still under construction, though!
+            </p>
+            <div style={{
+                padding: '18px 24px', borderRadius: 16,
+                background: 'linear-gradient(135deg, rgba(29,78,216,0.25), rgba(15,23,42,0.9))',
+                border: '1.5px solid rgba(251,191,36,0.4)',
+                boxShadow: '0 0 24px rgba(251,191,36,0.15)',
+                marginBottom: 20,
+            }}>
+                <div style={{ fontSize: 40, marginBottom: 8 }}>🚧</div>
+                <p style={{ fontSize: 15, color: '#fbbf24', fontWeight: 700 }}>Map Coming Soon!</p>
+                <p style={{ fontSize: 13, color: '#94a3b8', marginTop: 6 }}>
+                    Come back soon — the next map is being built by the crew!
+                </p>
+            </div>
+            <button className="btn-primary" onClick={onClose}
+                style={{ background: 'linear-gradient(135deg,#1d4ed8,#3b82f6)' }}>
+                ← Back to Campus
+            </button>
+        </div>
+    );
+}
+
 // ── IEEE HQ Activity ──────────────────────────────────────────────────────
 function HQActivity({ activityLog }) {
     return (
@@ -487,6 +518,27 @@ export default function ActivityModal() {
     }, [activeModal]);
 
     if (!activeModal) return null;
+
+    // Bus left modal bypasses the standard modal frame
+    if (activeModal === 'bus_left') {
+        const busColor = '#fbbf24';
+        const busTitle = '← Future Map';
+        return (
+            <div className="modal-backdrop" onClick={closeModal} onTouchStart={closeModal}>
+                <div className="modal-card"
+                    style={{ '--modal-color': busColor, '--modal-bg': 'rgba(15,23,42,0.95)' }}
+                    onClick={e => e.stopPropagation()} onTouchStart={e => e.stopPropagation()}>
+                    <div className="modal-header" style={{ borderColor: busColor }}>
+                        <h2 style={{ color: busColor }}>🚌 {busTitle}</h2>
+                        <button className="modal-close" onClick={closeModal}>✕</button>
+                    </div>
+                    <div className="modal-body">
+                        <BusLeftActivity onClose={closeModal} />
+                    </div>
+                </div>
+            </div>
+        );
+    }
 
     const handleComplete = (amount, building) => {
         if (!completedBuildings.has(building)) gainXP(amount, building);

@@ -9,6 +9,23 @@ const WORLD_H = 3000;
 const SPEED = 200;
 const HQ_XP_REQUIRED = 1200;
 
+// ── Boundary Walls ────────────────────────────────────────────────────────
+// Road + wall areas on left and right edges. Players cannot cross the walls.
+const WALL_THICKNESS = 180;   // total width of outer road + wall strip
+const ROAD_W = 120;           // road width (outside the wall)
+const WALL_W = 60;            // physical wall width
+// Left boundary: x=0..ROAD_W is road, x=ROAD_W..ROAD_W+WALL_W is wall
+// Right boundary: symmetric from WORLD_W
+const LEFT_WALL_X  = ROAD_W;                          // left wall starts here
+const RIGHT_WALL_X = WORLD_W - ROAD_W - WALL_W;       // right wall starts here
+const PLAY_LEFT    = LEFT_WALL_X + WALL_W;             // left play area edge
+const PLAY_RIGHT   = RIGHT_WALL_X;                     // right play area edge
+
+// Bus stop positions (midheight of the map)
+const LEFT_BUS_X  = ROAD_W / 2;                       // bus centre on left road
+const RIGHT_BUS_X = WORLD_W - ROAD_W / 2;             // bus centre on right road
+const BUS_Y       = WORLD_H / 2;
+
 // ── Buildings (Interactive Hubs + Scenic Landmarks) ─────────────────────
 const BUILDINGS = [
     // --- Original Core Activities ---
@@ -44,17 +61,7 @@ const BUILDINGS = [
         color: 0xea580c, accent: 0xfb923c, roofColor: 0x7c2d12,
         iconEmoji: '🤝', xp: 250,
     },
-    {
-        id: 'industry',
-        label: 'Industry Visit',
-        sublabel: 'Tech Tours & Exposure',
-        x: WORLD_W - 615, y: WORLD_H / 2 - 75, w: 330, h: 150,
-        color: 0xdb2777, accent: 0xf472b6, roofColor: 0x831843,
-        iconEmoji: '🚌', xp: 300,
-        isImage: true,
-        texture: 'bus_sprite',
-        locked: true, reqXP: 300,
-    },
+
     {
         id: 'hq',
         label: 'NISB Club (IEEE HQ)',
@@ -207,6 +214,10 @@ export default class GameScene extends Phaser.Scene {
         this.nisbot = null;
         this.nisbotLabel = null;
         this.nisbotHandshakeDone = false;
+        // Boundary buses
+        this.nearBus = null;   // 'left' | 'right' | null
+        this.leftBusZone  = null;
+        this.rightBusZone = null;
     }
 
     // ── Texture generation ──────────────────────────────────────────────────
@@ -813,38 +824,142 @@ export default class GameScene extends Phaser.Scene {
             for (let f = 0; f < 4; f++) this.createPlayerFrame(`p_${dir}_${f}`, dir, f);
         });
 
-        // Tree
-        if (!this.textures.exists('tree')) {
-            const g = this.make.graphics({ add: false });
-            // Trunk
-            g.fillStyle(0x6b3a1f); g.fillRect(20, 46, 14, 20);
-            // Shadow layer
-            g.fillStyle(0x14532d, 0.6); g.fillCircle(30, 34, 30);
-            // Main canopy
-            g.fillStyle(0x15803d); g.fillCircle(26, 28, 26);
-            // Lighter top
-            g.fillStyle(0x22c55e); g.fillCircle(20, 20, 17);
-            // Highlight
-            g.fillStyle(0x86efac, 0.3); g.fillCircle(16, 14, 8);
-            g.generateTexture('tree', 58, 66); g.destroy();
+        // Trees - 5 distinct types with proper trunks and foliage
+        const treeTypes = [
+            // Type 0: Classic Oak - Round full canopy
+            (g, w, h, cx) => {
+                // Trunk
+                g.fillStyle(0x654321); g.fillRect(cx - 12, h - 55, 24, 55);
+                g.fillStyle(0x8B4513); g.fillRect(cx - 12, h - 55, 8, 55);
+                // Large round canopy
+                g.fillStyle(0x1a5c2e); g.fillCircle(cx, h - 75, 50);
+                g.fillStyle(0x228B22); 
+                g.fillCircle(cx - 20, h - 70, 38);
+                g.fillCircle(cx + 20, h - 70, 38);
+                g.fillCircle(cx, h - 90, 42);
+                g.fillStyle(0x32CD32);
+                g.fillCircle(cx - 15, h - 95, 25);
+                g.fillCircle(cx + 18, h - 88, 22);
+            },
+            // Type 1: Pine - Tall triangular
+            (g, w, h, cx) => {
+                // Trunk
+                g.fillStyle(0x5c3d2e); g.fillRect(cx - 10, h - 50, 20, 50);
+                g.fillStyle(0x8B6914); g.fillRect(cx - 10, h - 50, 7, 50);
+                // Triangular pine layers
+                g.fillStyle(0x0d3d1a); g.fillTriangle(cx - 45, h - 50, cx + 45, h - 50, cx, h - 110);
+                g.fillStyle(0x1a5c2e); g.fillTriangle(cx - 40, h - 55, cx + 40, h - 55, cx, h - 105);
+                g.fillStyle(0x228B22); g.fillTriangle(cx - 30, h - 70, cx + 30, h - 70, cx, h - 100);
+                g.fillStyle(0x2E8B57); g.fillTriangle(cx - 20, h - 85, cx + 20, h - 85, cx, h - 95);
+            },
+            // Type 2: Willow - Drooping branches
+            (g, w, h, cx) => {
+                // Trunk
+                g.fillStyle(0x6b4423); g.fillRect(cx - 11, h - 52, 22, 52);
+                g.fillStyle(0x8B7355); g.fillRect(cx - 11, h - 52, 8, 52);
+                // Wide drooping canopy
+                g.fillStyle(0x556B2F); g.fillEllipse(cx, h - 75, 60, 40);
+                g.fillStyle(0x6B8E23);
+                for(let i = 0; i < 10; i++) {
+                    const angle = (i / 10) * Math.PI;
+                    const x = cx + Math.cos(angle) * 30;
+                    g.fillEllipse(x, h - 60, 10, 30);
+                }
+                g.fillStyle(0x9ACD32); g.fillEllipse(cx, h - 85, 35, 25);
+            },
+            // Type 3: Maple - Broad spreading
+            (g, w, h, cx) => {
+                // Thick trunk
+                g.fillStyle(0x5a3825); g.fillRect(cx - 14, h - 58, 28, 58);
+                g.fillStyle(0x8B4513); g.fillRect(cx - 14, h - 58, 10, 58);
+                // Broad spreading canopy
+                g.fillStyle(0x2F4F2F); g.fillEllipse(cx, h - 80, 65, 45);
+                g.fillStyle(0x228B22);
+                g.fillCircle(cx - 30, h - 75, 32);
+                g.fillCircle(cx + 30, h - 75, 32);
+                g.fillCircle(cx, h - 95, 35);
+                g.fillStyle(0x32CD32);
+                g.fillCircle(cx - 20, h - 100, 20);
+                g.fillCircle(cx + 20, h - 100, 20);
+            },
+            // Type 4: Birch - Tall slender
+            (g, w, h, cx) => {
+                // White trunk with black marks
+                g.fillStyle(0xF5F5DC); g.fillRect(cx - 8, h - 60, 16, 60);
+                g.fillStyle(0x000000);
+                for(let i = 0; i < 6; i++) {
+                    g.fillRect(cx - 8, h - 55 + i * 10, 16, 2);
+                }
+                // Light airy canopy
+                g.fillStyle(0x2E8B57); g.fillCircle(cx, h - 75, 40);
+                g.fillStyle(0x3CB371);
+                g.fillCircle(cx - 18, h - 72, 28);
+                g.fillCircle(cx + 18, h - 72, 28);
+                g.fillCircle(cx, h - 88, 32);
+                g.fillStyle(0x90EE90);
+                g.fillCircle(cx - 12, h - 92, 18);
+                g.fillCircle(cx + 12, h - 90, 16);
+            }
+        ];
+        
+        for (let i = 0; i < 5; i++) {
+            if (!this.textures.exists(`tree_${i}`)) {
+                const g = this.make.graphics({ add: false });
+                const w = 120, h = 150, cx = w / 2;
+                g.fillStyle(0x000000, 0.3); g.fillEllipse(cx, h - 2, 55, 14);
+                treeTypes[i](g, w, h, cx);
+                g.generateTexture(`tree_${i}`, w, h); 
+                g.destroy();
+            }
         }
 
         // Bench
         if (!this.textures.exists('bench')) {
             const g = this.make.graphics({ add: false });
-            g.fillStyle(0x92400e); g.fillRect(0, 6, 50, 8);
-            g.fillStyle(0x78350f);
-            g.fillRect(4, 14, 6, 10); g.fillRect(40, 14, 6, 10);
-            g.generateTexture('bench', 50, 24); g.destroy();
+            // Drop shadow
+            g.fillStyle(0x000000, 0.3); g.fillEllipse(30, 28, 52, 12);
+            // Black iron legs/supports
+            g.fillStyle(0x1f2937);
+            g.fillRect(8, 16, 4, 16); g.fillRect(48, 16, 4, 16); // front legs
+            g.fillRect(10, 6, 3, 20); g.fillRect(47, 6, 3, 20);  // back supports
+            // Wood planks - Backrest
+            g.fillStyle(0xa16207); g.fillRect(4, 6, 52, 4);
+            g.fillStyle(0x854d0e); g.fillRect(4, 12, 52, 4);
+            // Wood planks - Seat
+            g.fillStyle(0xca8a04); g.fillRect(2, 17, 56, 6); // front seat plank (lighter)
+            g.fillStyle(0xa16207); g.fillRect(4, 23, 52, 4); // bottom lip seat plank
+            g.generateTexture('bench', 60, 34); g.destroy();
         }
 
         // Lamppost
         if (!this.textures.exists('lamp')) {
             const g = this.make.graphics({ add: false });
-            g.fillStyle(0x374151); g.fillRect(6, 18, 4, 44);
-            g.fillStyle(0xfbbf24); g.fillCircle(8, 14, 10);
-            g.fillStyle(0xfef9c3, 0.5); g.fillCircle(8, 14, 6);
-            g.generateTexture('lamp', 16, 62); g.destroy();
+            // Drop shadow
+            g.fillStyle(0x000000, 0.4); g.fillEllipse(16, 80, 24, 10);
+            
+            // Base pedestal
+            g.fillStyle(0x1f2937); g.fillRect(10, 70, 12, 12);
+            g.fillStyle(0x374151); g.fillRect(12, 70, 8, 12);
+            
+            // Main Pole
+            g.fillStyle(0x1f2937); g.fillRect(13, 20, 6, 50);
+            g.fillStyle(0x374151); g.fillRect(14, 20, 2, 50);
+            
+            // Curved Top Arm - simplified to angled line
+            g.fillStyle(0x1f2937); 
+            g.fillRect(16, 8, 16, 4);
+            g.fillRect(14, 12, 4, 10);
+            
+            // Lamp housing
+            g.fillStyle(0x1f2937); g.fillRect(28, 6, 12, 6);
+            g.fillStyle(0x374151); g.fillRect(30, 4, 8, 2);
+            
+            // Bulb / Light glow
+            g.fillStyle(0xfffbcc); g.fillCircle(34, 14, 4);
+            g.fillStyle(0xfbbf24, 0.6); g.fillCircle(34, 14, 8);
+            g.fillStyle(0xfbbf24, 0.2); g.fillCircle(34, 14, 18);
+            
+            g.generateTexture('lamp', 54, 88); g.destroy();
         }
 
         // Flower
@@ -910,29 +1025,66 @@ export default class GameScene extends Phaser.Scene {
         this.load.image('scooty_sprite', '/assets/scooty_realistic.svg');
         this.load.image('bus_sprite', '/assets/bus.png');
         this.load.audio('bgm_track', '/assets/bgm_track.mpeg');
+        
+        // Load tree PNGs (only 0-2 available)
+        for (let i = 0; i < 3; i++) {
+            this.load.image(`tree_png_${i}`, `/assets/tree_${i}.png`);
+        }
+        
+        // Optional assets - won't fail if missing
+        this.load.on('loaderror', (file) => {
+            console.log('Optional asset not found:', file.key);
+        });
     }
 
     // ── Create ────────────────────────────────────────────────────────────
     create() {
-        // 1. Create all textures first (renderer must be live)
-        this.createAllTextures();
+        try {
+            console.log('Creating game scene...');
+            // 1. Create all textures first (renderer must be live)
+            this.createAllTextures();
+            console.log('Textures created');
 
-        // 2. World bounds
-        this.cameras.main.setBounds(0, 0, WORLD_W, WORLD_H);
-        this.physics.world.setBounds(0, 0, WORLD_W, WORLD_H);
+            // 2. World bounds — player is confined to the play area horizontally
+            this.cameras.main.setBounds(0, 0, WORLD_W, WORLD_H);
+            this.physics.world.setBounds(0, 0, WORLD_W, WORLD_H);
+            console.log('World bounds set');
 
-        // 3. Ground layer
-        this.drawGround();
+            // 3. Ground layer
+            this.drawGround();
+            console.log('Ground drawn');
 
-        // 4. Environment objects
-        this.drawEnvironment();
+            // 4. Environment objects
+            this.drawEnvironment();
+            console.log('Environment drawn');
 
-        // 5. Buildings
-        this.drawBuildings();
+            // 5. Buildings
+            this.drawBuildings();
+            console.log('Buildings drawn');
 
-        // 6. Physics
-        this.staticGroup = this.physics.add.staticGroup();
-        this.interactZones = [];
+            // 6. Physics
+            this.staticGroup = this.physics.add.staticGroup();
+            this.interactZones = [];
+
+        // ── Boundary walls (invisible physics bodies) ──────────────────────
+        // Left wall
+        const leftWallBody = this.add.rectangle(
+            LEFT_WALL_X + WALL_W / 2, WORLD_H / 2,
+            WALL_W, WORLD_H, 0x000000, 0
+        );
+        this.physics.add.existing(leftWallBody, true);
+        this.staticGroup.add(leftWallBody);
+
+        // Right wall
+        const rightWallBody = this.add.rectangle(
+            RIGHT_WALL_X + WALL_W / 2, WORLD_H / 2,
+            WALL_W, WORLD_H, 0x000000, 0
+        );
+        this.physics.add.existing(rightWallBody, true);
+        this.staticGroup.add(rightWallBody);
+
+        // ── Boundary buses (interactive triggers) ─────────────────────────
+        this.createBoundaryBuses();
 
         BUILDINGS.forEach(b => {
             if (b.isImage && b.texture) {
@@ -1077,13 +1229,93 @@ export default class GameScene extends Phaser.Scene {
         this.time.addEvent({ delay: 60, callback: this.tickDayCycle, callbackScope: this, loop: true });
 
         EventBus.emit('scene-ready', this);
+        } catch (error) {
+            console.error('Error creating game scene:', error);
+            // Emit scene-ready anyway so loading screen doesn't hang
+            EventBus.emit('scene-ready', this);
+        }
     }
 
     drawGround() {
-        const g = this.add.graphics().setDepth(0);
+        // Generate procedural grass texture
+        if (!this.textures.exists('gen_grass')) {
+            const tg = this.make.graphics({ add: false });
+            tg.fillStyle(0x275d27);
+            tg.fillRect(0, 0, 64, 64);
+            for (let i = 0; i < 40; i++) {
+                tg.fillStyle(Math.random() > 0.5 ? 0x2d6a2d : 0x1f4b1f, 0.6);
+                tg.fillRect(Math.floor(Math.random() * 64), Math.floor(Math.random() * 64), 4, 4);
+            }
+            tg.generateTexture('gen_grass', 64, 64);
+            tg.destroy();
+        }
+        this.add.tileSprite(0, 0, WORLD_W, WORLD_H, 'gen_grass').setOrigin(0, 0).setDepth(0);
+        console.log('Grass tile created');
 
-        // Grass base
-        g.fillStyle(0x2d6a2d); g.fillRect(0, 0, WORLD_W, WORLD_H);
+        // Create the graphics layer for roads and paths explicitly ON TOP of the grass (Depth 0.1)
+        const g = this.add.graphics().setDepth(0.1);
+
+        // ── Left outer road (outside boundary wall) ──────────────────────
+        // Asphalt road surface
+        g.fillStyle(0x2a2a2a); g.fillRect(0, 0, ROAD_W, WORLD_H);
+        // Road edge lines
+        g.fillStyle(0xf5c518, 1);
+        g.fillRect(ROAD_W - 6, 0, 4, WORLD_H);  // yellow centre line on road edge
+        // Road markings (dashes)
+        g.fillStyle(0xffffff, 0.7);
+        for (let ry = 80; ry < WORLD_H; ry += 120) {
+            g.fillRect(ROAD_W / 2 - 3, ry, 6, 60);
+        }
+        // Road kerb / sidewalk
+        g.fillStyle(0x888888); g.fillRect(ROAD_W - 10, 0, 10, WORLD_H);
+
+        // ── Left boundary WALL ────────────────────────────────────────────
+        // Wall body (brick/concrete look)
+        g.fillStyle(0x5a3e28); g.fillRect(LEFT_WALL_X, 0, WALL_W, WORLD_H);
+        // Brick texture rows
+        g.fillStyle(0x3d2b1a);
+        for (let wy = 0; wy < WORLD_H; wy += 30) {
+            g.fillRect(LEFT_WALL_X, wy, WALL_W, 3);
+        }
+        g.fillStyle(0x3d2b1a);
+        for (let wy = 0; wy < WORLD_H; wy += 60) {
+            g.fillRect(LEFT_WALL_X + WALL_W / 2, wy + 3, 3, 27);
+        }
+        // Wall top cap
+        g.fillStyle(0x7a5535); g.fillRect(LEFT_WALL_X, 0, WALL_W, 8);
+        // Red warning stripe at player-facing side
+        g.fillStyle(0xcc2200); g.fillRect(LEFT_WALL_X + WALL_W - 8, 0, 8, WORLD_H);
+        g.fillStyle(0xffd700);
+        for (let wy = 30; wy < WORLD_H; wy += 80) {
+            g.fillRect(LEFT_WALL_X + WALL_W - 8, wy, 8, 32);
+        }
+
+        // ── Right outer road (outside boundary wall) ──────────────────────
+        g.fillStyle(0x2a2a2a); g.fillRect(RIGHT_WALL_X + WALL_W, 0, ROAD_W, WORLD_H);
+        g.fillStyle(0xf5c518, 1);
+        g.fillRect(RIGHT_WALL_X + WALL_W, 0, 4, WORLD_H); // yellow line at road start
+        g.fillStyle(0xffffff, 0.7);
+        for (let ry = 80; ry < WORLD_H; ry += 120) {
+            g.fillRect(RIGHT_WALL_X + WALL_W + ROAD_W / 2 - 3, ry, 6, 60);
+        }
+        g.fillStyle(0x888888); g.fillRect(RIGHT_WALL_X + WALL_W, 0, 10, WORLD_H);
+
+        // ── Right boundary WALL ───────────────────────────────────────────
+        g.fillStyle(0x5a3e28); g.fillRect(RIGHT_WALL_X, 0, WALL_W, WORLD_H);
+        g.fillStyle(0x3d2b1a);
+        for (let wy = 0; wy < WORLD_H; wy += 30) {
+            g.fillRect(RIGHT_WALL_X, wy, WALL_W, 3);
+        }
+        for (let wy = 0; wy < WORLD_H; wy += 60) {
+            g.fillRect(RIGHT_WALL_X + WALL_W / 2, wy + 3, 3, 27);
+        }
+        g.fillStyle(0x7a5535); g.fillRect(RIGHT_WALL_X, 0, WALL_W, 8);
+        // Red warning stripe at player-facing side
+        g.fillStyle(0xcc2200); g.fillRect(RIGHT_WALL_X, 0, 8, WORLD_H);
+        g.fillStyle(0xffd700);
+        for (let wy = 30; wy < WORLD_H; wy += 80) {
+            g.fillRect(RIGHT_WALL_X, wy, 8, 32);
+        }
 
         // Grass tufts (simple, fast)
         g.fillStyle(0x276627, 0.6);
@@ -1099,16 +1331,73 @@ export default class GameScene extends Phaser.Scene {
             }
         }
 
-        // Horizontal path (Main Ave)
-        g.fillStyle(0xb0bec5); g.fillRect(0, WORLD_H / 2 - 48, WORLD_W, 96);
-        // Vertical path (Main St)
-        g.fillRect(WORLD_W / 2 - 48, 0, 96, WORLD_H);
+        // --- High-Quality Paved Paths ---
+        const drawPath = (px, py, pw, ph) => {
+            // Main concrete base with gradient
+            g.fillStyle(0xa8b5c7); 
+            g.fillRect(px, py, pw, ph);
+            
+            // Darker edges for depth
+            g.fillStyle(0x7a8a9e, 0.4);
+            if (pw > ph) {
+                g.fillRect(px, py, pw, 8);
+                g.fillRect(px, py + ph - 8, pw, 8);
+            } else {
+                g.fillRect(px, py, 8, ph);
+                g.fillRect(px + pw - 8, py, 8, ph);
+            }
+            
+            // Paving slab grid pattern
+            g.fillStyle(0x5f6d7e, 0.3);
+            for(let x = px; x < px + pw; x += 40) g.fillRect(x, py, 3, ph);
+            for(let y = py; y < py + ph; y += 40) g.fillRect(px, y, pw, 3);
+            
+            // Elevated concrete kerb borders with 3D effect
+            g.fillStyle(0x3d4a5c);
+            if (pw > ph) {
+                g.fillRect(px, py, pw, 10);
+                g.fillRect(px, py + ph - 10, pw, 10);
+                g.fillStyle(0xd4dce6, 0.6);
+                g.fillRect(px, py + 2, pw, 3);
+                g.fillRect(px, py + ph - 8, pw, 3);
+            } else {
+                g.fillRect(px, py, 10, ph);
+                g.fillRect(px + pw - 10, py, 10, ph);
+                g.fillStyle(0xd4dce6, 0.6);
+                g.fillRect(px + 2, py, 3, ph);
+                g.fillRect(px + pw - 8, py, 3, ph);
+            }
+        };
 
-        // --- Side Paths to new buildings ---
-        g.fillRect(300 + 170, WORLD_H - 1080 - 40, WORLD_W - 600 - 340, 80); // Connects Jubilees
-        g.fillRect(510 - 40, WORLD_H / 2 + 48, 80, WORLD_H / 2 - 450 - (WORLD_H / 2 + 48)); // To Red Canteen
-        g.fillRect(WORLD_W - 530 - 40, WORLD_H / 2 + 48, 80, WORLD_H / 2 - 450 - (WORLD_H / 2 + 48)); // To Chai Shop
-        g.fillRect(WORLD_W / 2 - 40, WORLD_H - 1000 + 125, 80, (WORLD_H / 2 - 48) - (WORLD_H - 1000 + 125)); // To Virgin Tree
+        // Horizontal path (Main Ave)
+        drawPath(0, WORLD_H / 2 - 48, WORLD_W, 96);
+        // Vertical path (Main St)
+        drawPath(WORLD_W / 2 - 48, 0, 96, WORLD_H);
+
+        // Side Paths to new buildings
+        drawPath(300 + 170, WORLD_H - 1080 - 40, WORLD_W - 600 - 340, 80);
+        drawPath(510 - 40, WORLD_H / 2 + 48, 80, WORLD_H / 2 - 450 - (WORLD_H / 2 + 48));
+        drawPath(WORLD_W - 530 - 40, WORLD_H / 2 + 48, 80, WORLD_H / 2 - 450 - (WORLD_H / 2 + 48));
+        drawPath(WORLD_W / 2 - 40, WORLD_H - 1000 + 125, 80, (WORLD_H / 2 - 48) - (WORLD_H - 1000 + 125));
+
+        // Loop roads
+        drawPath(200, 400, 80, WORLD_H / 2 - 400);
+        drawPath(200, 400, WORLD_W / 2 - 200, 80);
+        drawPath(200, 800, WORLD_W / 2 - 200, 80);
+        drawPath(WORLD_W - 280, 400, 80, WORLD_H / 2 - 400);
+        drawPath(WORLD_W / 2, 400, WORLD_W / 2 - 200, 80);
+        drawPath(WORLD_W / 2, 800, WORLD_W / 2 - 200, 80);
+        drawPath(200, WORLD_H / 2 + 48, 80, WORLD_H - (WORLD_H / 2 + 48) - 200);
+        drawPath(200, WORLD_H - 300, WORLD_W / 2 - 200, 80);
+        drawPath(WORLD_W - 280, WORLD_H / 2 + 48, 80, WORLD_H - (WORLD_H / 2 + 48) - 200);
+        drawPath(WORLD_W / 2, WORLD_H - 300, WORLD_W / 2 - 200, 80);
+
+        // Clean up internal overlapping kerbs at central intersections
+        g.fillStyle(0xa8b5c7);
+        g.fillRect(WORLD_W / 2 - 42, WORLD_H / 2 - 42, 84, 84);
+        g.fillStyle(0x5f6d7e, 0.3);
+        for(let x = WORLD_W / 2 - 42; x < WORLD_W / 2 + 42; x += 40) g.fillRect(x, WORLD_H / 2 - 42, 3, 84);
+        for(let y = WORLD_H / 2 - 42; y < WORLD_H / 2 + 42; y += 40) g.fillRect(WORLD_W / 2 - 42, y, 84, 3);
 
         // --- Decorative Tiles around Buildings ---
         const drawTiles = (cx, cy, cols, rows, size) => {
@@ -1138,20 +1427,19 @@ export default class GameScene extends Phaser.Scene {
         g.fillRect(WORLD_W / 2 + 100, WORLD_H - 300, 600, 8); // Drive aisle divider
 
         // --- extensive road loops to fill space ---
-        g.fillStyle(0xcfd8dc); // Slightly lighter path for loops
         // Top Left Loop
-        g.fillRect(200, 400, 80, WORLD_H / 2 - 400);
-        g.fillRect(200, 400, WORLD_W / 2 - 200, 80);
-        g.fillRect(200, 800, WORLD_W / 2 - 200, 80);
+        drawPath(200, 400, 80, WORLD_H / 2 - 400);
+        drawPath(200, 400, WORLD_W / 2 - 200, 80);
+        drawPath(200, 800, WORLD_W / 2 - 200, 80);
         // Top Right Loop
-        g.fillRect(WORLD_W - 280, 400, 80, WORLD_H / 2 - 400);
-        g.fillRect(WORLD_W / 2, 400, WORLD_W / 2 - 200, 80);
-        g.fillRect(WORLD_W / 2, 800, WORLD_W / 2 - 200, 80);
+        drawPath(WORLD_W - 280, 400, 80, WORLD_H / 2 - 400);
+        drawPath(WORLD_W / 2, 400, WORLD_W / 2 - 200, 80);
+        drawPath(WORLD_W / 2, 800, WORLD_W / 2 - 200, 80);
         // Bottom Left & Right Paths
-        g.fillRect(200, WORLD_H / 2 + 48, 80, WORLD_H - (WORLD_H / 2 + 48) - 200);
-        g.fillRect(200, WORLD_H - 300, WORLD_W / 2 - 200, 80);
-        g.fillRect(WORLD_W - 280, WORLD_H / 2 + 48, 80, WORLD_H - (WORLD_H / 2 + 48) - 200);
-        g.fillRect(WORLD_W / 2, WORLD_H - 300, WORLD_W / 2 - 200, 80);
+        drawPath(200, WORLD_H / 2 + 48, 80, WORLD_H - (WORLD_H / 2 + 48) - 200);
+        drawPath(200, WORLD_H - 300, WORLD_W / 2 - 200, 80);
+        drawPath(WORLD_W - 280, WORLD_H / 2 + 48, 80, WORLD_H - (WORLD_H / 2 + 48) - 200);
+        drawPath(WORLD_W / 2, WORLD_H - 300, WORLD_W / 2 - 200, 80);
 
         // STAGE (Open Air Theatre) at Top Left (x: 500, y: 560)
         g.fillStyle(0x78350f); g.fillRect(450, 550, 300, 200); // base
@@ -1183,28 +1471,29 @@ export default class GameScene extends Phaser.Scene {
     }
 
     drawEnvironment() {
-        // Trees around the map perimeter, corners, and building edges
+        // Trees - only in grass areas, isolated from buildings/benches/lamps
         const trees = [
-            // Original
-            [90, 90], [200, 120], [90, 400], [90, 700], [200, 900], [90, 1200], [200, 1500], [90, 1700],
-            [WORLD_W - 90, 90], [WORLD_W - 200, 120], [WORLD_W - 90, 400], [WORLD_W - 90, 700], [WORLD_W - 200, 900], [WORLD_W - 90, 1200], [WORLD_W - 90, 1700],
-            [500, 80], [900, 90], [1300, 80], [1700, 90],
-            [500, WORLD_H - 80], [900, WORLD_H - 90], [1300, WORLD_H - 80], [1700, WORLD_H - 90],
-            [650, 450], [1750, 450], [650, 1350], [1750, 1350],
-            // New Perimeter Fillers
-            [90, 2200], [200, 2500], [90, 2800], [400, 2900], [700, 2850], [1000, 2900],
-            [WORLD_W - 90, 2200], [WORLD_W - 200, 2500], [WORLD_W - 90, 2800], [WORLD_W - 400, 2900], [WORLD_W - 700, 2850], [WORLD_W - 1000, 2900],
-            [2200, 90], [2600, 120], [3000, 80], [3400, 100], [3800, 90],
-            [2200, WORLD_H - 90], [2600, WORLD_H - 120], [3000, WORLD_H - 80], [3400, WORLD_H - 100], [3800, WORLD_H - 90],
-            // Around Golden/Diamond Jubilee
-            [200, WORLD_H - 1200], [700, WORLD_H - 1250], [850, WORLD_H - 1100],
-            [WORLD_W - 200, WORLD_H - 1200], [WORLD_W - 700, WORLD_H - 1250], [WORLD_W - 850, WORLD_H - 1100],
-            // Around Canteens
-            [300, WORLD_H - 450], [700, WORLD_H - 350], [WORLD_W - 300, WORLD_H - 450], [WORLD_W - 700, WORLD_H - 350],
-            // Near Virgin Tree grove
-            [WORLD_W / 2 - 250, WORLD_H - 800], [WORLD_W / 2 + 250, WORLD_H - 800], [WORLD_W / 2 - 300, WORLD_H - 1000], [WORLD_W / 2 + 300, WORLD_H - 1000]
+            // Top grass strip
+            [350, 150], [520, 160], [680, 155], [890, 165], [1050, 150], [1220, 160],
+            [1480, 155], [1650, 165], [1820, 150], [2100, 160], [2280, 155], [2450, 165],
+            [2680, 150], [2850, 160], [3020, 155], [3250, 165], [3480, 150], [3620, 160],
+            // Bottom grass strip
+            [380, 2850], [570, 2840], [720, 2850], [920, 2840], [1080, 2850], [1260, 2840],
+            [1520, 2850], [1680, 2840], [1890, 2850], [2130, 2840], [2310, 2850], [2490, 2840],
+            [2710, 2850], [2880, 2840], [3050, 2850], [3280, 2840], [3510, 2850], [3650, 2840],
+            // Left grass strip
+            [280, 580], [280, 820], [280, 1020], [280, 1280], [280, 1480], [280, 1720],
+            [280, 1920], [280, 2180], [280, 2420], [280, 2580],
+            // Right grass strip
+            [3720, 620], [3720, 850], [3720, 1050], [3720, 1310], [3720, 1510], [3720, 1750],
+            [3720, 1980], [3720, 2210], [3720, 2450], [3720, 2610],
         ];
-        trees.forEach(([tx, ty]) => this.add.image(tx, ty, 'tree').setDepth(2));
+        
+        trees.forEach(([tx, ty]) => {
+            const varIndex = (tx + ty) % 3;
+            const treeKey = this.textures.exists(`tree_png_${varIndex}`) ? `tree_png_${varIndex}` : `tree_${varIndex}`;
+            this.add.image(tx, ty, treeKey).setDepth(2).setScale(0.5);
+        });
 
         const benches = [
             // Center Plaza
@@ -1229,24 +1518,14 @@ export default class GameScene extends Phaser.Scene {
         benches.forEach(([bx, by]) => this.add.image(bx, by, 'bench').setDepth(2));
 
         const lamps = [
-            // Center Plaza
-            [WORLD_W / 2 - 190, WORLD_H / 2 - 190], [WORLD_W / 2 + 190, WORLD_H / 2 - 190],
-            [WORLD_W / 2 - 190, WORLD_H / 2 + 190], [WORLD_W / 2 + 190, WORLD_H / 2 + 190],
-            // Main Paths
-            [450, WORLD_H / 2 - 80], [450, WORLD_H / 2 + 80], [WORLD_W - 450, WORLD_H / 2 - 80], [WORLD_W - 450, WORLD_H / 2 + 80],
-            [WORLD_W / 2 - 80, 450], [WORLD_W / 2 + 80, 450], [WORLD_W / 2 - 80, WORLD_H - 450], [WORLD_W / 2 + 80, WORLD_H - 450],
-            // New Buildings
-            [400, WORLD_H - 1040], [WORLD_W - 400, WORLD_H - 1040], // Jubilees
-            [470, WORLD_H - 350], [WORLD_W - 470, WORLD_H - 350], // Canteens
-            [WORLD_W / 2 - 100, WORLD_H - 1050], [WORLD_W / 2 + 100, WORLD_H - 1050], // Virgin Tree
-            // --- NEW: Near Stage ---
-            [410, 560], [790, 560], [410, 710], [790, 710],
-            // --- NEW: Extensive road lighting ---
-            [230, 450], [230, 850], [230, 1250], [WORLD_W - 230, 450], [WORLD_W - 230, 850], [WORLD_W - 230, 1250],
-            [800, 430], [1200, 430], [1600, 430], [WORLD_W - 800, 430], [WORLD_W - 1200, 430], [WORLD_W - 1600, 430],
-            [800, 830], [1200, 830], [1600, 830], [WORLD_W - 800, 830], [WORLD_W - 1200, 830], [WORLD_W - 1600, 830],
-            [230, WORLD_H - 850], [230, WORLD_H - 1250], [WORLD_W - 230, WORLD_H - 850], [WORLD_W - 230, WORLD_H - 1250],
-            [800, WORLD_H - 270], [1200, WORLD_H - 270], [1600, WORLD_H - 270], [WORLD_W - 800, WORLD_H - 270], [WORLD_W - 1200, WORLD_H - 270], [WORLD_W - 1600, WORLD_H - 270]
+            // Along main paths (on the sides, not center)
+            [WORLD_W / 2 - 120, WORLD_H / 2 - 80], [WORLD_W / 2 + 120, WORLD_H / 2 - 80],
+            [WORLD_W / 2 - 120, WORLD_H / 2 + 80], [WORLD_W / 2 + 120, WORLD_H / 2 + 80],
+            [WORLD_W / 2 - 80, 600], [WORLD_W / 2 + 80, 600],
+            [WORLD_W / 2 - 80, WORLD_H - 600], [WORLD_W / 2 + 80, WORLD_H - 600],
+            // Near buildings
+            [450, 350], [WORLD_W - 450, 350],
+            [450, WORLD_H - 350], [WORLD_W - 450, WORLD_H - 350],
         ];
         lamps.forEach(([lx, ly]) => this.add.image(lx, ly, 'lamp').setDepth(2));
 
@@ -1280,6 +1559,65 @@ export default class GameScene extends Phaser.Scene {
                 .setScale(v.scale)
                 .setRotation(v.rotation)
                 .setDepth(2.7 + v.y * 0.0005);
+        });
+    }
+
+    // ── Boundary Buses ────────────────────────────────────────────────────
+    createBoundaryBuses() {
+        // bus.png is a HORIZONTAL sprite; use the same scale as the parked bus in the lot.
+        const BUS_SCALE = 0.38;
+        // Approximate half-height for label/zone positioning (bus.png height at scale 0.38)
+        const BUS_HALF_H = 50;
+
+        // ── Left Bus – parked on the left road, facing right (into the map) ─
+        // Road spans x = 0 → ROAD_W (120). Centre on the road.
+        const lbx = ROAD_W / 2;     // x = 60 — safely inside world bounds
+        const lby = BUS_Y;
+        this.leftBusSprite = this.add.image(lbx, lby, 'bus_sprite')
+            .setScale(BUS_SCALE)
+            .setDepth(5)
+            .setFlipX(true);   // flip so it faces right (into the map)
+
+        // Label positioned just inside the play area next to the wall
+        this.add.text(PLAY_LEFT + 6, lby - BUS_HALF_H - 28, '🚌 ← Future Map', {
+            fontSize: '13px', fontFamily: 'Arial', fontStyle: 'bold',
+            color: '#fbbf24', stroke: '#0c1a2e', strokeThickness: 4,
+            backgroundColor: '#1d4ed8cc', padding: { x: 8, y: 4 },
+        }).setOrigin(0, 1).setDepth(8);
+
+        // Interaction zone: sits on the play-area side of the left wall so the
+        // player can reach it without needing to cross.
+        this.leftBusZone = this.add.zone(PLAY_LEFT + 40, lby, 80, BUS_HALF_H * 2 + 80);
+        this.physics.add.existing(this.leftBusZone, true);
+
+        // Pulsing glow on the bus
+        this.tweens.add({
+            targets: this.leftBusSprite,
+            alpha: 0.7, yoyo: true, repeat: -1, duration: 900, ease: 'Sine.easeInOut',
+        });
+
+        // ── Right Bus – parked on the right road, outside the wall, facing left ─
+        // Road spans x = RIGHT_WALL_X + WALL_W (3880) → WORLD_W (4000). Centre on road.
+        const rbx = RIGHT_WALL_X + WALL_W + ROAD_W / 2;   // x = 3940 — inside world bounds
+        const rby = BUS_Y;
+        this.rightBusSprite = this.add.image(rbx, rby, 'bus_sprite')
+            .setScale(BUS_SCALE)
+            .setDepth(5);   // no flip — bus.png default faces left, correct for right-side
+
+        // Label just inside the play area
+        this.add.text(PLAY_RIGHT - 6, rby - BUS_HALF_H - 28, '🚌 → Industry Visit (IV)', {
+            fontSize: '13px', fontFamily: 'Arial', fontStyle: 'bold',
+            color: '#38bdf8', stroke: '#0c1a2e', strokeThickness: 4,
+            backgroundColor: '#065f46cc', padding: { x: 8, y: 4 },
+        }).setOrigin(1, 1).setDepth(8);
+
+        // Interaction zone on the play-area side of the right wall
+        this.rightBusZone = this.add.zone(PLAY_RIGHT - 40, rby, 80, BUS_HALF_H * 2 + 80);
+        this.physics.add.existing(this.rightBusZone, true);
+
+        this.tweens.add({
+            targets: this.rightBusSprite,
+            alpha: 0.7, yoyo: true, repeat: -1, duration: 1100, ease: 'Sine.easeInOut',
         });
     }
 
@@ -1323,15 +1661,18 @@ export default class GameScene extends Phaser.Scene {
             this.hqLockOverlay.fillCircle(cx, cy + 8, 5);
         }
 
-        // 2. Industry Visit Lock (requires 300 XP)
-        const ind = BUILDINGS.find(b => b.id === 'industry');
-        if (ind && this.playerXP < 300) {
+        // 2. Industry Visit Lock (requires 300 XP) — rendered on the RIGHT BUS
+        if (this.rightBusSprite && this.playerXP < 300) {
+            // Rough bounding box for the bus
+            const bx = this.rightBusSprite.x - 70;
+            const by = this.rightBusSprite.y - 45;
+            const bw = 140, bh = 90;
             this.hqLockOverlay.fillStyle(0x000000, 0.55);
-            this.hqLockOverlay.fillRect(ind.x, ind.y, ind.w, ind.h);
+            this.hqLockOverlay.fillRect(bx, by, bw, bh);
             this.hqLockOverlay.lineStyle(3, 0xff2244, 1);
-            this.hqLockOverlay.strokeRect(ind.x, ind.y, ind.w, ind.h);
-            // Lock icon drawn as a simple shape
-            const cx = ind.x + ind.w / 2, cy = ind.y + ind.h / 2;
+            this.hqLockOverlay.strokeRect(bx, by, bw, bh);
+
+            const cx = bx + bw / 2, cy = by + bh / 2;
             this.hqLockOverlay.fillStyle(0xff2244, 0.8);
             this.hqLockOverlay.fillRect(cx - 20, cy - 5, 40, 30);
             this.hqLockOverlay.lineStyle(6, 0xff2244, 1);
@@ -1740,12 +2081,32 @@ export default class GameScene extends Phaser.Scene {
             }
         });
 
+        // ── Check bus proximity ──────────────────────────────────────────
+        this.nearBus = null;
+        if (this.leftBusZone) {
+            const pb = this.player.getBounds();
+            const lz = this.leftBusZone.getBounds();
+            const rz = this.rightBusZone.getBounds();
+            if (Phaser.Geom.Rectangle.Overlaps(pb, lz)) this.nearBus = 'left';
+            else if (Phaser.Geom.Rectangle.Overlaps(pb, rz)) this.nearBus = 'right';
+        }
+
         // Prompt
-        if (this.nearBuilding) {
+        if (this.nearBus) {
+            let busLabel = '';
+            if (this.nearBus === 'left') {
+                busLabel = '[E] Board bus → Future Map';
+            } else {
+                busLabel = this.playerXP < 300 
+                    ? `🔒 IV locked — need ${300 - this.playerXP} more XP` 
+                    : '[E] Board bus → Industry Visit (IV)';
+            }
+            this.promptText.setText(busLabel);
+            if (this.promptText.alpha < 1) this.tweens.add({ targets: this.promptText, alpha: 1, duration: 180 });
+        } else if (this.nearBuilding) {
             const b = this.nearBuilding;
             let lockedMsg = null;
             if (b.id === 'hq' && this.playerXP < HQ_XP_REQUIRED) lockedMsg = `🔒 IEEE HQ locked — need ${HQ_XP_REQUIRED - this.playerXP} more XP`;
-            else if (b.id === 'industry' && this.playerXP < 300) lockedMsg = `🔒 Industry Visit locked — need ${300 - this.playerXP} more XP`;
 
             const msg = lockedMsg || `[E] Enter ${b.label}`;
             this.promptText.setText(msg);
@@ -1764,11 +2125,26 @@ export default class GameScene extends Phaser.Scene {
         this.mobileInteract = false;
 
         if (doInteract) {
-            if (this.nearBuilding) {
+            if (this.nearBus) {
+                // ── Bus boarding ──────────────────────────────────────────
+                if (this.nearBus === 'left') {
+                    // Future map — not yet implemented
+                    audio.playBoink();
+                    EventBus.emit('open-modal', 'bus_left');
+                } else if (this.nearBus === 'right') {
+                    if (this.playerXP < 300) {
+                        audio.playError();
+                        this.cameras.main.shake(180, 0.007);
+                    } else {
+                        // Industry Visit map — triggers the native Industry Visit activity
+                        audio.playBoink();
+                        EventBus.emit('open-modal', 'industry');
+                    }
+                }
+            } else if (this.nearBuilding) {
                 const b = this.nearBuilding;
                 let isLocked = false;
                 if (b.id === 'hq' && this.playerXP < HQ_XP_REQUIRED) isLocked = true;
-                if (b.id === 'industry' && this.playerXP < 300) isLocked = true;
 
                 if (isLocked) {
                     audio.playError();
